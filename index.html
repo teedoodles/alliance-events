@@ -61,9 +61,11 @@ const fmt=d=>d?new Date(d).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:
 const tok=()=>{try{return sessionStorage.getItem('au-tok')||''}catch(e){return''}},setTok=t=>{try{t?sessionStorage.setItem('au-tok',t):sessionStorage.removeItem('au-tok')}catch(e){}};
 const b64=b=>new Promise(r=>{const x=new FileReader;x.onload=()=>r(x.result);x.readAsDataURL(b)});
 /* Every call is a GET: Google's redirect rejects cross-site POST requests, but GET works. */
-async function send(body){let r,d;try{r=await fetch(API+'?d='+encodeURIComponent(JSON.stringify(body)))}catch(e){throw{message:'Cannot reach the server. Check your connection and the API address at the top of this file.'}}
- try{d=await r.json()}catch(e){throw{message:'Unexpected reply from the server. Check that the API address is the Web App URL ending in /exec.'}}
+async function send1(body){let r,d;try{r=await fetch(API+'?d='+encodeURIComponent(JSON.stringify(body)))}catch(e){throw{message:'Cannot reach the server. Check your connection and the API address at the top of this file.'}}
+ try{d=await r.json()}catch(e){throw{message:'The server is busy or gave an unexpected reply. Please try again in a moment.'}}
  if(d.token!==undefined)setTok(d.token);if(d.error)throw{status:d.status,message:d.error,fields:d.fields};return d.data}
+/* Retries only when no proper answer came back (busy server, dropped connection); real errors from the server are shown at once. */
+async function send(body,tries=1){for(let a=1;;a++){try{return await send1(body)}catch(e){if(a>=tries||e.status)throw e;await new Promise(r=>setTimeout(r,700*a+Math.random()*700))}}}
 async function api(path,o={}){if(DEMO)return mock(path,o);
  if(o.blob){const d=await api(path.replace('/export','/export-data')),wb=XLSX.utils.book_new();
   [['Event Summary',d.events],['Participant Details',d.details],['Registration Statistics',d.stats]].forEach(([n,r])=>XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(r),n));
@@ -71,9 +73,11 @@ async function api(path,o={}){if(DEMO)return mock(path,o);
  const[p,qs]=path.split('?'),body={path:p,method:o.method||'GET',query:Object.fromEntries(new URLSearchParams(qs||'')),token:tok(),data:o.json||null};
  if(o.form){body.data={};for(const[k,v]of o.form.entries())body.data[k]=v instanceof Blob?await b64(v):v}
  if(body.data&&body.data.photo){const parts=body.data.photo.match(/[\s\S]{1,2500}/g),id=Math.random().toString(36).slice(2,10)+Date.now().toString(36);
-  await Promise.all(parts.map((x,i)=>send({path:'/api/photo-chunk',method:'POST',query:{},token:'',data:{id,i,n:parts.length,part:x}})));
+  /* Two pieces at a time, each retried if the server is busy: keeps a crowd of uploads under Google's limit of 30 simultaneous requests. */
+  let k=0;const up=async()=>{while(k<parts.length){const i=k++;await send({path:'/api/photo-chunk',method:'POST',query:{},token:'',data:{id,i,n:parts.length,part:parts[i]}},5)}};
+  await Promise.all([up(),up()]);
   delete body.data.photo;body.data.photoId=id;body.data.photoN=parts.length}
- return send(body)}
+ return send(body,body.method==='GET'?3:1)}
 function showErr(e,map={}){document.querySelectorAll('.err').forEach(x=>x.textContent='');document.querySelectorAll('input.bad').forEach(x=>x.classList.remove('bad'));
  let left=[];Object.entries(e.fields||{}).forEach(([k,v])=>{k=map[k]||k;const s=$(`[data-f="${k}"]`);if(s){s.textContent=v;const i=$('#'+k);i&&i.classList.add('bad')}else left.push(v)});
  const b=$('#formerr');if(b)b.textContent=e.fields?(left.length?left.join(' '):'Please fix the highlighted fields.'):e.message;else toast(e.message)}

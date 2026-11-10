@@ -52,7 +52,7 @@ td::before{content:attr(data-label);color:var(--mut);font-size:.8rem;flex:none;t
 <main id="app"></main><dialog id="dlg"></dialog><div id="toast" role="status"></div>
 <script>
 /* ====== CONFIG: set this to your deployed backend URL (no trailing slash) ====== */
-const API='https://script.googleusercontent.com/macros/echo?user_content_key=AUkAhnQyDQYL7EjQhg42CI-ohC_Hqox-Mzs3emGKgr8GL3hC2kPtlMfAbhaorBP_US8wTaD5BUB7pfx25R0RxlQzm1Q-IPy3wjn2xUIL7YWOt_MYRxD0CGMo6MBP-phPt7CygeODhZKbSnSofSCHzmxXx-NvX1x91t5IyqPbKyEXI5sOXClGZs6532QSzkLRkXRP4gBek5v7DUSlKO0_27CdM9YdLpriixUjJ_ABfZeyaW1PpahGQFnmkFtcbboTNFbhFMvvwnLEjAxGL2e50CgzjYAmQthz7g&lib=My-X2Cr531ge1CmCxS-NGupTzWPfVHIZP';   // '' = demo mode (data stays in this browser). For live use, paste your Google Apps Script Web App URL here (it ends in /exec)
+const API='https://script.google.com/macros/s/AKfycbyYPoC_K_pyzdZLfV41CIoKWxayeQ3dnF_wdjQEBqTrWmKbOG88_2hVoy1MRQFM-0SO/exec';   // '' = demo mode (data stays in this browser). For live use, paste your Google Apps Script Web App URL here (it ends in /exec)
 const DEMO=!API;
 
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -60,16 +60,20 @@ const toast=(m,ms=3200)=>{const t=$('#toast');t.textContent=m;t.style.display='b
 const fmt=d=>d?new Date(d).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'}):'';
 const tok=()=>{try{return sessionStorage.getItem('au-tok')||''}catch(e){return''}},setTok=t=>{try{t?sessionStorage.setItem('au-tok',t):sessionStorage.removeItem('au-tok')}catch(e){}};
 const b64=b=>new Promise(r=>{const x=new FileReader;x.onload=()=>r(x.result);x.readAsDataURL(b)});
+/* Every call is a GET: Google's redirect rejects cross-site POST requests, but GET works. */
+async function send(body){let r,d;try{r=await fetch(API+'?d='+encodeURIComponent(JSON.stringify(body)))}catch(e){throw{message:'Cannot reach the server. Check your connection and the API address at the top of this file.'}}
+ try{d=await r.json()}catch(e){throw{message:'Unexpected reply from the server. Check that the API address is the Web App URL ending in /exec.'}}
+ if(d.token!==undefined)setTok(d.token);if(d.error)throw{status:d.status,message:d.error,fields:d.fields};return d.data}
 async function api(path,o={}){if(DEMO)return mock(path,o);
  if(o.blob){const d=await api(path.replace('/export','/export-data')),wb=XLSX.utils.book_new();
   [['Event Summary',d.events],['Participant Details',d.details],['Registration Statistics',d.stats]].forEach(([n,r])=>XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(r),n));
   return new Blob([XLSX.write(wb,{type:'array',bookType:'xlsx'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})}
  const[p,qs]=path.split('?'),body={path:p,method:o.method||'GET',query:Object.fromEntries(new URLSearchParams(qs||'')),token:tok(),data:o.json||null};
  if(o.form){body.data={};for(const[k,v]of o.form.entries())body.data[k]=v instanceof Blob?await b64(v):v}
- let r,d;try{r=await fetch(API,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(body)})}catch(e){throw{message:'Cannot reach the server. Check your connection and the API address at the top of this file.'}}
- try{d=await r.json()}catch(e){throw{message:'Unexpected reply from the server. Check that the API address is the Web App URL ending in /exec.'}}
- if(d.token!==undefined)setTok(d.token);
- if(d.error)throw{status:d.status,message:d.error,fields:d.fields};return d.data}
+ if(body.data&&body.data.photo){const parts=body.data.photo.match(/[\s\S]{1,2500}/g),id=Math.random().toString(36).slice(2,10)+Date.now().toString(36);
+  await Promise.all(parts.map((x,i)=>send({path:'/api/photo-chunk',method:'POST',query:{},token:'',data:{id,i,n:parts.length,part:x}})));
+  delete body.data.photo;body.data.photoId=id;body.data.photoN=parts.length}
+ return send(body)}
 function showErr(e,map={}){document.querySelectorAll('.err').forEach(x=>x.textContent='');document.querySelectorAll('input.bad').forEach(x=>x.classList.remove('bad'));
  let left=[];Object.entries(e.fields||{}).forEach(([k,v])=>{k=map[k]||k;const s=$(`[data-f="${k}"]`);if(s){s.textContent=v;const i=$('#'+k);i&&i.classList.add('bad')}else left.push(v)});
  const b=$('#formerr');if(b)b.textContent=e.fields?(left.length?left.join(' '):'Please fix the highlighted fields.'):e.message;else toast(e.message)}
@@ -178,8 +182,8 @@ async function regPage(id){const A=$('#app');let e;
  $('#se').onclick=ev=>send('email',ev.target);$('#sm').onclick=ev=>send('mobile',ev.target);$('#ve').onclick=()=>ver('email','eo');$('#vm').onclick=()=>ver('mobile','mo');
  if(!cfg.mobileOtp){$('#sm').hidden=true;F.mt='skip'}
  let stream;const stop=()=>{stream&&stream.getTracks().forEach(t=>t.stop());$('#vd').hidden=$('#snap').hidden=true};
- const small=(src,w,h)=>{const c=document.createElement('canvas'),s=Math.min(1,640/Math.max(w,h));c.width=w*s;c.height=h*s;c.getContext('2d').drawImage(src,0,0,c.width,c.height);
-  c.toBlob(b=>{F.photo=b;$('#pv').src=URL.createObjectURL(b);$('#pv').hidden=$('#rt').hidden=false},'image/jpeg',.8)};
+ const small=(src,w,h)=>{const c=document.createElement('canvas'),s=Math.min(1,360/Math.max(w,h));c.width=w*s;c.height=h*s;c.getContext('2d').drawImage(src,0,0,c.width,c.height);
+  c.toBlob(b=>{F.photo=b;$('#pv').src=URL.createObjectURL(b);$('#pv').hidden=$('#rt').hidden=false},'image/jpeg',.65)};
  $('#cam').onclick=async()=>{try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}});$('#vd').srcObject=stream;$('#vd').hidden=$('#snap').hidden=false}catch(x){toast('Camera blocked. Upload a photo instead.')}};
  $('#snap').onclick=()=>{small($('#vd'),$('#vd').videoWidth,$('#vd').videoHeight);stop()};
  $('#rt').onclick=()=>{F.photo=null;$('#pv').hidden=$('#rt').hidden=true;$('#cam').click()};

@@ -126,6 +126,22 @@ function oneEvent(id) {
   if (s.expired) fail(410, 'This event has ended and registration is no longer available.');
   return s;
 }
+// Short readable event IDs: EV001, EV002, ...
+const evNum = rows => rows.reduce((m, x) => { const k = /^EV(\d+)$/.exec(x.id); return k ? Math.max(m, +k[1]) : m; }, 0);
+const evId = n => 'EV' + (n < 100 ? ('00' + n).slice(-3) : String(n));
+const nextEventId = rows => evId(evNum(rows) + 1);
+/** Run once from the editor (Run > migrateEventIds) to give older events a short ID. Registrations follow their event. */
+function migrateEventIds() {
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    const evs = rowsOf('Events'), regs = rowsOf('Registrations'); let n = evNum(evs), done = 0;
+    evs.filter(e => !/^EV\d+$/.test(e.id)).forEach(e => {
+      const id = evId(++n); setCell('Events', e._row, 'id', id); done++;
+      regs.filter(r => r.event_id === e.id).forEach(r => setCell('Registrations', r._row, 'event_id', id));
+    });
+    Logger.log('Events given a short ID: ' + done);
+  } finally { lock.releaseLock(); }
+}
 function createEvent(B) {
   const fe = {}, D = /^\d{4}-\d{2}-\d{2}$/, T = /^\d{2}:\d{2}$/;
   if (!B.name || String(B.name).trim().length < 3) fe.name = 'Event name must be at least 3 characters.';
@@ -138,11 +154,11 @@ function createEvent(B) {
   const vu = B.valid_until || (B.event_date + 'T23:59:59+05:30'), vd = new Date(vu);
   if (!fe.event_date) { if (isNaN(vd)) fe.valid_until = 'Enter a valid date and time.'; else if (vd <= new Date()) fe.valid_until = 'Validity date must be in the future.'; }
   if (Object.keys(fe).length) fail(400, 'Please fix the highlighted fields.', fe);
-  const e = { id: Utilities.getUuid(), name: String(B.name).trim(), description: B.description || '', category: B.category || 'General', venue: B.venue || '', event_date: B.event_date,
+  const e = { id: '', name: String(B.name).trim(), description: B.description || '', category: B.category || 'General', venue: B.venue || '', event_date: B.event_date,
     start_time: B.start_time || '', end_time: B.end_time || '', reg_opens: B.reg_opens || '', reg_deadline: B.reg_deadline || '', valid_until: vd.toISOString(), capacity: +B.capacity,
     status: 'Upcoming', reg_open: 'TRUE', archived: 'FALSE', created_at: new Date().toISOString() };
   const lock = LockService.getScriptLock(); lock.waitLock(20000);
-  try { addRow('Events', e); } finally { lock.releaseLock(); }
+  try { e.id = nextEventId(rowsOf('Events')); addRow('Events', e); } finally { lock.releaseLock(); }
   return evOut(e);
 }
 function patchEvent(id, B) {
@@ -218,7 +234,7 @@ function exportData(Q) {
   const clean = o => { Object.keys(o).forEach(k => o[k] = cell(o[k])); return o; };
   return {
     events: evs.map(e => clean({ 'Event ID': e.id, 'Event Name': e.name, Category: e.category, Venue: e.venue, 'Event Date': e.event_date, 'Valid Until (IST)': ist(e.valid_until, 'dd/MM/yyyy HH:mm'), Status: e.expired ? 'Expired' : e.status, Capacity: e.capacity, Registered: e.registered })),
-    details: list.map(r => clean({ 'Registration ID': r.reg_code, 'Event ID': r.event_id, 'Event Name': r.event_name, 'Participant Name': r.name, 'Email Address': r.email, 'Mobile Number': r.mobile,
+    details: list.map(r => clean({ 'Pass Code (Registration ID)': r.reg_code, 'Event ID': r.event_id, 'Event Name': r.event_name, 'Participant Name': r.name, 'Email Address': r.email, 'Mobile Number': r.mobile,
       Organization: r.organization, Department: r.department, Type: r.type, 'Email Verification': 'Verified', 'Mobile Verification': r.mobile_verified === 'TRUE' ? 'Verified' : 'Not required',
       'Registration Date': ist(r.registered_at, 'dd/MM/yyyy'), 'Registration Time': ist(r.registered_at, 'HH:mm:ss'), Status: r.checked_in_at ? 'Checked in' : r.status, 'Check-in Time': ist(r.checked_in_at, 'dd/MM/yyyy HH:mm'), Photograph: r.photo_id ? 'On file (Drive)' : 'None' })),
     stats: evs.map(e => ({ Event: e.name, Registered: e.registered, 'Checked In': e.checked_in, Cancelled: e.cancelled, Capacity: e.capacity, 'Fill %': Math.round(e.registered / e.capacity * 100) }))

@@ -208,7 +208,7 @@ function filtered(Q) {
       (!Q.status || r.status === Q.status) && Q.verified !== '0' && (!from || day >= from) && (!to || day <= to);
   }).reverse();
 }
-const regOut = r => ({ id: r.reg_code, reg_code: r.reg_code, status: r.status, email_verified: true, mobile_verified: true, registered_at: r.registered_at, checked_in_at: r.checked_in_at || null,
+const regOut = r => ({ id: r.reg_code, reg_code: r.reg_code, status: r.status, email_verified: true, mobile_verified: r.mobile_verified === 'TRUE', registered_at: r.registered_at, checked_in_at: r.checked_in_at || null,
   event_id: r.event_id, events: { name: r.event_name }, participants: { full_name: r.name, email: r.email, mobile: r.mobile }, photoId: r.photo_id || null, photoUrl: null });
 const photoUrl = id => 'data:image/jpeg;base64,' + Utilities.base64Encode(DriveApp.getFileById(id).getBlob().getBytes());
 function exportData(Q) {
